@@ -136,3 +136,20 @@ class ResampleParityTest {
     @Test fun bicubicDownMatchesPillow() = check("bicubic_down", RgbImage.Filter.BICUBIC)
     @Test fun bicubicUpMatchesPillow() = check("bicubic_up", RgbImage.Filter.BICUBIC)
 }
+
+class ZeroShotTest {
+    private fun unit(index: Int): FloatArray = FloatArray(EMBEDDING_DIM).also { it[index] = 1f }
+
+    @Test
+    fun picksTheClosestLabelsAndAlwaysReturnsThree() {
+        val labels = listOf("кот", "собака", "хомяк", "машина")
+        val matrix = FloatArray(labels.size * EMBEDDING_DIM)
+        for (i in labels.indices) unit(i).copyInto(matrix, i * EMBEDDING_DIM)
+        val image = FloatArray(EMBEDDING_DIM).also { it[0] = 0.95f; it[2] = 0.31f }
+        val res = ZeroShot.top(image, matrix, labels)
+        assertEquals("кот", res[0].first)
+        assertTrue(res.size >= 3, "top three are always present")
+        assertTrue(res.zipWithNext().all { (a, b) -> a.second >= b.second }, "sorted by probability")
+        assertEquals(1.0, res.sumOf { it.second }, 0.5)
+    }
+}

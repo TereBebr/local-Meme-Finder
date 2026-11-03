@@ -208,11 +208,25 @@ private fun Cell(id: Long, selected: Boolean, onClick: () -> Unit, onLongClick: 
     }
 }
 
+private class TagsUi(val tags: List<String>, val error: String?)
+
 @Composable
 private fun Viewer(id: Long, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val bmp by produceState<Bitmap?>(null, id) { value = withContext(Dispatchers.IO) { Media.loadBitmap(ctx, id, 2048) } }
     val text = remember(id) { Library.ocrText(id) }
+    val emb = remember(id) { Library.embedding(id) }
+    val tagsState by Tags.state.collectAsState()
+    val tagsUi by produceState<TagsUi?>(null, id) {
+        value = if (emb == null) {
+            TagsUi(emptyList(), null)
+        } else {
+            withContext(Dispatchers.Default) {
+                val err = Tags.ensure(ctx)
+                if (err != null) TagsUi(emptyList(), err) else TagsUi(Tags.top(emb).map { it.first }, null)
+            }
+        }
+    }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
@@ -224,13 +238,19 @@ private fun Viewer(id: Long, onClose: () -> Unit) {
                         CircularProgressIndicator()
                     }
                 }
-                if (text.isNotBlank()) {
-                    Text(
-                        text,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(12.dp).heightIn(max = 110.dp).verticalScroll(rememberScrollState()),
-                    )
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).heightIn(max = 170.dp).verticalScroll(rememberScrollState())) {
+                    val ui = tagsUi
+                    val meaning = when {
+                        emb == null -> "не посчитан для этой картинки (индексация «Только текст» или модель картинок не сработала; см. «Индекс» → «Проверить модели»)"
+                        ui == null -> if (tagsState.isNotEmpty()) tagsState else "считаю…"
+                        ui.error != null -> "ошибка: ${ui.error}"
+                        else -> ui.tags.joinToString(" · ")
+                    }
+                    Text("Смысл: $meaning", color = Color(0xFFB9B0FF), style = MaterialTheme.typography.bodyMedium)
+                    if (text.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Текст: " + text.replace("\n", " / "), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Button(onClick = { Share.send(ctx, listOf(id)) }) { Text("Поделиться") }
@@ -254,6 +274,7 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
     var mode by remember { mutableStateOf(SearchMode.ALL) }
     var hits by remember { mutableStateOf<List<Hit>>(emptyList()) }
     var status by remember { mutableStateOf("") }
+    var semanticError by remember { mutableStateOf("") }
     var viewing by remember { mutableStateOf<Long?>(null) }
     val selected = remember { mutableStateListOf<Long>() }
     val embCache = remember { HashMap<String, FloatArray>() }
@@ -276,13 +297,30 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
         if (mode != SearchMode.TEXT && !Engines.isTextLoaded() && !embCache.containsKey(q)) status = "Загружаю модель поиска (несколько секунд)…"
         val result = withContext(Dispatchers.Default) {
             var emb: FloatArray? = null
+            var err = ""
             if (mode != SearchMode.TEXT) {
-                emb = embCache[q] ?: runCatching { Engines.text(ctx).encode(q) }.getOrNull()?.also { embCache[q] = it }
+                emb = embCache[q]
+                if (emb == null) {
+                    try {
+                        val e = Engines.text(ctx).encode(q)
+                        embCache[q] = e
+                        emb = e
+                    } catch (t: Throwable) {
+                        IndexState.report("поиск по смыслу", t)
+                        err = "${t.javaClass.simpleName}: ${t.message}"
+                    }
+                }
             }
-            Library.search(q, emb, mode)
+            Pair(Library.search(q, emb, mode), err)
         }
-        hits = result
-        status = if (result.isEmpty()) "Ничего не нашлось" else "Найдено: ${result.size}"
+        hits = result.first
+        semanticError = result.second
+        status = when {
+            result.first.isNotEmpty() -> "Найдено: ${result.first.size}"
+            mode != SearchMode.TEXT && Library.size() > 0 && Library.embeddedCount() == 0 ->
+                "У проиндексированных картинок нет вектора смысла, поиск по смыслу невозможен"
+            else -> "Ничего не нашлось"
+        }
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -303,6 +341,14 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
         }
         if (running) {
             Text("Индексация: $done из $total", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
+        }
+        if (semanticError.isNotEmpty()) {
+            Text(
+                "Поиск по смыслу не работает: $semanticError. Откройте «Индекс» → «Проверить модели».",
+                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                color = Color(0xFFB3261E),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (selected.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -353,21 +399,47 @@ private fun toggle(list: MutableList<Long>, id: Long) {
 @Composable
 private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    var chosen by remember { mutableStateOf<Set<String>?>(Settings.buckets(ctx)) }
+    var statuses by remember { mutableStateOf<Map<Long, IndexStatus>>(emptyMap()) }
+    var stats by remember { mutableStateOf(Triple(0, 0, 0)) }
+    var chosen by remember { mutableStateOf(Settings.buckets(ctx)) }
     var mode by remember { mutableStateOf(Settings.mode(ctx)) }
     var modelStatus by remember { mutableStateOf("") }
+    var diag by remember { mutableStateOf<List<String>>(emptyList()) }
+    var diagRunning by remember { mutableStateOf(false) }
 
     val running by IndexState.running.collectAsState()
     val done by IndexState.done.collectAsState()
     val total by IndexState.total.collectAsState()
     val eta by IndexState.etaSeconds.collectAsState()
     val message by IndexState.message.collectAsState()
+    val errors by IndexState.errors.collectAsState()
+    val lastError by IndexState.lastError.collectAsState()
     val version by Library.version.collectAsState()
 
     LaunchedEffect(Unit) { items = withContext(Dispatchers.IO) { Media.listImages(ctx) } }
+    LaunchedEffect(version, running) {
+        withContext(Dispatchers.IO) {
+            statuses = MemeApp.instance.db.statuses()
+            stats = MemeApp.instance.db.stats()
+        }
+    }
     val buckets = remember(items) { Media.buckets(items) }
-    fun isChosen(b: Bucket) = chosen == null || b.id.toString() in chosen!!
+    val needClip = mode != IndexMode.OCR_ONLY
+    val needOcr = mode != IndexMode.CLIP_ONLY
+    val doneByBucket = remember(items, statuses, mode) {
+        items.groupBy { it.bucketId }.mapValues { (_, list) ->
+            list.count {
+                val st = statuses[it.id]
+                st != null && st.mtime == it.mtime && (!needClip || st.hasEmb) && (!needOcr || st.hasOcr)
+            }
+        }
+    }
+    fun isChosen(b: Bucket): Boolean = chosen == null || chosen!!.contains(b.id.toString())
+    val chosenBuckets = buckets.filter { isChosen(it) }
+    val pending = chosenBuckets.sumOf { it.count - (doneByBucket[it.id] ?: 0) }
+    val modelsOk = ModelFiles.missing(ctx).isEmpty()
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -375,8 +447,8 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
                 TextButton(onClick = onBack) { Text("← Назад") }
                 Text("Индексация", style = MaterialTheme.typography.titleLarge)
             }
-            val libSize = remember(version) { Library.size() }
-            Text("В галерее картинок: ${items.size}. В индексе: $libSize")
+            Text("В галерее картинок: ${items.size}")
+            Text("В индексе: ${stats.first}, из них со смыслом: ${stats.second}, с текстом: ${stats.third}")
         }
         item { Text("Что искать", style = MaterialTheme.typography.titleMedium) }
         items(IndexMode.values().toList()) { m ->
@@ -395,8 +467,13 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
                 TextButton(onClick = { chosen = null; Settings.setBuckets(ctx, null) }) { Text("Все") }
                 TextButton(onClick = { chosen = emptySet(); Settings.setBuckets(ctx, emptySet()) }) { Text("Ничего") }
             }
+            Text(
+                "Галочка: индексировать эту папку. Справа от названия видно, сколько картинок в ней уже обработано в выбранном режиме.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         items(buckets, key = { it.id }) { b ->
+            val d = doneByBucket[b.id] ?: 0
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = isChosen(b), onCheckedChange = { on ->
                     val current = chosen ?: buckets.map { it.id.toString() }.toSet()
@@ -404,7 +481,14 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
                     chosen = next
                     Settings.setBuckets(ctx, next)
                 })
-                Text("${b.name} (${b.count})")
+                Column(Modifier.weight(1f)) {
+                    Text(b.name)
+                    Text(
+                        if (d >= b.count) "обработано всё (${b.count}) ✓" else "обработано $d из ${b.count}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (d >= b.count) Color(0xFF2E7D32) else Color.Unspecified,
+                    )
+                }
             }
         }
         item {
@@ -412,7 +496,16 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
             if (running) {
                 Button(onClick = { IndexService.stop(ctx) }) { Text("Остановить") }
             } else {
-                Button(onClick = { IndexService.start(ctx) }) { Text("Начать индексацию") }
+                Button(onClick = { IndexService.start(ctx) }, enabled = pending > 0 && modelsOk) {
+                    Text(if (pending > 0) "Начать индексацию (осталось: $pending)" else "Начать индексацию")
+                }
+                val hint = when {
+                    !modelsOk -> "Сначала нужны файлы моделей (раздел «Модели» ниже)."
+                    chosenBuckets.isEmpty() -> "Не выбрано ни одной папки: отметьте хотя бы одну."
+                    pending == 0 -> "Выбранные папки уже полностью обработаны в этом режиме."
+                    else -> ""
+                }
+                if (hint.isNotEmpty()) Text(hint, style = MaterialTheme.typography.bodySmall)
             }
             if (running || message.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
@@ -422,17 +515,50 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
                     Text("$done из $total, осталось ${formatEta(eta)}")
                 }
             }
+            if (errors > 0) {
+                Text(
+                    "Ошибок при индексации: $errors. Последняя: $lastError",
+                    color = Color(0xFFB3261E),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             Text(
-                "Индексацию можно не ждать: она идёт в фоне, приложение можно закрыть. Остановить её можно в шторке уведомлений. " +
+                "Индексация идёт в фоне, приложение можно закрыть. Остановить её можно кнопкой здесь или в шторке уведомлений. " +
                     "Уже обработанные картинки не пересчитываются.",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp),
             )
+            OutlinedButton(
+                onClick = { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
+                modifier = Modifier.padding(top = 8.dp),
+            ) { Text("Не ограничивать в фоне (батарея)") }
+            Text(
+                "На Samsung лучше найти «Мем-Искатель» в списке и выбрать «Не оптимизировать», иначе фоновая работа может сильно тормозить.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         item {
             Spacer(Modifier.height(16.dp))
+            Text("Проверка", style = MaterialTheme.typography.titleMedium)
+            Text("Если поиск «Смысл» ничего не находит, нажмите и покажите результат: здесь видно, на каком шаге ломается.", style = MaterialTheme.typography.bodySmall)
+            Button(
+                enabled = !diagRunning,
+                onClick = {
+                    scope.launch {
+                        diagRunning = true
+                        diag = emptyList()
+                        withContext(Dispatchers.Default) { Diagnostics.run(ctx) { line -> diag = diag + line } }
+                        diagRunning = false
+                    }
+                },
+            ) { Text(if (diagRunning) "Проверяю…" else "Проверить модели") }
+        }
+        items(diag) { line -> Text(line, style = MaterialTheme.typography.bodySmall) }
+        item {
+            Spacer(Modifier.height(16.dp))
             Text("Модели", style = MaterialTheme.typography.titleMedium)
-            Text(if (ModelFiles.missing(ctx).isEmpty()) "Все файлы моделей на месте." else "Не хватает: " + ModelFiles.missing(ctx).joinToString(", "))
+            Text(if (modelsOk) "Все файлы моделей на месте." else "Не хватает: " + ModelFiles.missing(ctx).joinToString(", "))
             ModelPickerButton("Заменить файлы моделей", onModelsChanged) { modelStatus = it }
             if (modelStatus.isNotEmpty()) Text(modelStatus, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(32.dp))

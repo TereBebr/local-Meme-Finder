@@ -32,13 +32,16 @@ enum class IndexMode(val title: String, val hint: String) {
 object Settings {
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    /** null means "all folders". */
-    fun buckets(ctx: Context): Set<String>? = prefs(ctx).getStringSet("buckets", null)
+    /** Selected gallery folder ids; null means "all folders". Stored as a plain comma-separated string. */
+    fun buckets(ctx: Context): Set<String>? {
+        val raw = prefs(ctx).getString("buckets_csv", null) ?: return null
+        return raw.split(",").filter { it.isNotEmpty() }.toSet()
+    }
 
     fun setBuckets(ctx: Context, value: Set<String>?) {
         val e = prefs(ctx).edit()
-        if (value == null) e.remove("buckets") else e.putStringSet("buckets", value)
-        e.apply()
+        if (value == null) e.remove("buckets_csv") else e.putString("buckets_csv", value.joinToString(","))
+        e.commit()
     }
 
     fun mode(ctx: Context): IndexMode =

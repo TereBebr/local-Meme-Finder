@@ -16,6 +16,10 @@ class SearchIndex {
 
     val size: Int get() = ids.size
 
+    fun embeddedCount(): Int = embeddings.count { it != null }
+
+    fun embeddingOf(id: Long): FloatArray? = positions[id]?.let { embeddings[it] }
+
     fun clear() {
         ids.clear(); texts.clear(); trigrams.clear(); embeddings.clear(); positions.clear()
     }

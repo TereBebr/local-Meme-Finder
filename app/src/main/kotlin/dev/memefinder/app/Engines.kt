@@ -46,6 +46,7 @@ object ModelFiles {
             val dst = File(dir(ctx), name)
             if (dst.exists()) dst.delete()
             if (tmp.renameTo(dst)) copied.add(name)
+            if (name == TEXT) Tags.reset(ctx)
         }
         return copied
     }
@@ -103,6 +104,10 @@ object Library {
     fun size(): Int = synchronized(lock) { index.size }
 
     fun ocrText(id: Long): String = synchronized(lock) { ocrById[id] ?: "" }
+
+    fun embeddedCount(): Int = synchronized(lock) { index.embeddedCount() }
+
+    fun embedding(id: Long): FloatArray? = synchronized(lock) { index.embeddingOf(id) }
 
     fun load(db: Db) {
         synchronized(lock) {

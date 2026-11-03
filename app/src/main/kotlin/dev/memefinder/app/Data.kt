@@ -129,6 +129,16 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "index.db", null, 1) {
         return out
     }
 
+    /** Counts for the status panel: total rows, rows with an embedding, rows with recognized text. */
+    fun stats(): Triple<Int, Int, Int> {
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*), SUM(emb IS NOT NULL), SUM(ocr IS NOT NULL AND length(ocr) > 0) FROM images", null,
+        ).use { c ->
+            c.moveToFirst()
+            return Triple(c.getInt(0), c.getInt(1), c.getInt(2))
+        }
+    }
+
     class Row(val ocr: String?, val hasOcr: Boolean, val emb: FloatArray?)
 
     fun getRow(id: Long): Row? {

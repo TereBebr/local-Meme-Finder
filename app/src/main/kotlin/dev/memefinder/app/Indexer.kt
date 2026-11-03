@@ -27,6 +27,14 @@ object IndexState {
     val total = MutableStateFlow(0)
     val etaSeconds = MutableStateFlow(-1)
     val message = MutableStateFlow("")
+    val errors = MutableStateFlow(0)
+    val lastError = MutableStateFlow("")
+
+    fun report(where: String, e: Throwable) {
+        errors.value++
+        lastError.value = "$where: ${e.javaClass.simpleName}: ${e.message}".take(300)
+        Log.w("MemeFinder", where, e)
+    }
 }
 
 object Indexer {
@@ -37,7 +45,11 @@ object Indexer {
         val mode = Settings.mode(ctx)
         val doOcr = mode != IndexMode.CLIP_ONLY
         val doClip = mode != IndexMode.OCR_ONLY
+        // run at foreground priority; ONNX Runtime's worker threads inherit it when the sessions are created below
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND)
         IndexState.running.value = true
+        IndexState.errors.value = 0
+        IndexState.lastError.value = ""
         IndexState.done.value = 0
         IndexState.total.value = 0
         IndexState.etaSeconds.value = -1
@@ -49,6 +61,10 @@ object Indexer {
             db.delete(status.keys.filter { it !in present })
 
             val selected = Settings.buckets(ctx)
+            if (selected != null && selected.isEmpty()) {
+                IndexState.message.value = "Не выбрано ни одной папки"
+                return@withContext
+            }
             val wanted = if (selected == null) all else all.filter { it.bucketId.toString() in selected }
             val todo = wanted.filter {
                 val st = status[it.id]
@@ -56,7 +72,7 @@ object Indexer {
             }
             IndexState.total.value = todo.size
             if (todo.isEmpty()) {
-                IndexState.message.value = "Всё уже проиндексировано"
+                IndexState.message.value = "Нечего индексировать: выбранные папки уже обработаны"
                 Library.load(db)
                 return@withContext
             }
@@ -89,7 +105,7 @@ object Indexer {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    Log.w(TAG, "failed on ${item.name}", e)
+                    IndexState.report("индексация ${item.name}", e)
                 }
                 recent.addLast(SystemClock.elapsedRealtime() - t0)
                 if (recent.size > 20) recent.removeFirst()
@@ -110,6 +126,7 @@ object Indexer {
 class IndexService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -122,6 +139,11 @@ class IndexService : Service() {
         }
         if (job?.isActive == true) return START_NOT_STICKY
         startForeground(NOTIFICATION_ID, notification(0, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        // keep the CPU awake while the screen is off, otherwise Android pauses the work
+        val wl = getSystemService(android.os.PowerManager::class.java)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "memefinder:indexing")
+        wl.acquire(12 * 60 * 60 * 1000L)
+        wakeLock = wl
         job = scope.launch {
             try {
                 Indexer.run(applicationContext) { done, total ->
@@ -131,10 +153,12 @@ class IndexService : Service() {
             } catch (e: CancellationException) {
                 IndexState.message.value = "Остановлено"
             } catch (e: Throwable) {
-                Log.e("IndexService", "indexing failed", e)
+                IndexState.report("индексация", e)
                 IndexState.message.value = "Ошибка: ${e.message}"
             } finally {
                 Engines.releaseIndexing()
+                wakeLock?.let { if (it.isHeld) it.release() }
+                wakeLock = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -143,6 +167,7 @@ class IndexService : Service() {
     }
 
     override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
         scope.cancel()
         super.onDestroy()
     }
