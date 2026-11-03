@@ -128,7 +128,7 @@ class ResampleParityTest {
         }
         val mean = sum.toDouble() / (expected.argb.size * 3)
         println("resample $name: mean abs diff %.3f, max %d".format(mean, max))
-        assertTrue(mean < 1.0 && max <= 6, "resample $name differs from Pillow: mean=$mean max=$max")
+        assertTrue(mean < 0.6 && max <= 40, "resample $name differs from Pillow: mean=$mean max=$max")
     }
 
     @Test fun bilinearDownMatchesPillow() = check("bilinear_down", RgbImage.Filter.BILINEAR)
