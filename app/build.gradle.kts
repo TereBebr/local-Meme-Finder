@@ -17,6 +17,16 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    // One fixed key for every build, so a new APK installs over the old one and keeps the index.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release { isMinifyEnabled = false }
     }
