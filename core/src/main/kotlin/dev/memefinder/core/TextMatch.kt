@@ -9,7 +9,7 @@ object TextMatch {
     private val CONFUSABLE: Map<Char, Char> = mapOf(
         'a' to 'а', 'b' to 'в', 'c' to 'с', 'e' to 'е', 'h' to 'н', 'k' to 'к', 'm' to 'м',
         'o' to 'о', 'p' to 'р', 't' to 'т', 'x' to 'х', 'y' to 'у',
-        'ё' to 'е', 'й' to 'и', 'ъ' to 'ь',
+        'ё' to 'е', 'ë' to 'е', 'й' to 'и', 'ъ' to 'ь',
     )
 
     /** Lower-case, unify look-alike letters, keep only letters and digits (no spaces). */

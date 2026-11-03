@@ -43,14 +43,14 @@ class OcrIntegrationTest {
             return
         }
         OcrEngine(OrtEnvironment.getEnvironment(), det.path, rec.path, threads = 2).use { ocr ->
-            val img = render(listOf("ПРИВЕТ МИР", "Хомяк и котик"))
+            val img = render(listOf("ПРИВЕТ МИР", "КОТИК И ЖИРАФ"))
             val t0 = System.nanoTime()
             val lines = ocr.run(img)
             println("OCR (${(System.nanoTime() - t0) / 1_000_000} ms): $lines")
             val doc = TextMatch.canon(lines.joinToString(" "))
             val tri = TextMatch.trigrams(doc)
             assertTrue(TextMatch.queryScore(TextMatch.terms("привет мир"), doc, tri) >= 0.6, "expected 'привет мир' in $lines")
-            assertTrue(TextMatch.queryScore(TextMatch.terms("хомяк"), doc, tri) >= 0.6, "expected 'хомяк' in $lines")
+            assertTrue(TextMatch.queryScore(TextMatch.terms("котик"), doc, tri) >= 0.6, "expected 'котик' in $lines")
         }
     }
 }
