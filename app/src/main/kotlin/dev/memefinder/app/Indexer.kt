@@ -30,9 +30,15 @@ object IndexState {
     val errors = MutableStateFlow(0)
     val lastError = MutableStateFlow("")
 
+    /** Indexing failures: counted and shown on the indexing screen. */
     fun report(where: String, e: Throwable) {
         errors.value++
         lastError.value = "$where: ${e.javaClass.simpleName}: ${e.message}".take(300)
+        Log.w("MemeFinder", where, e)
+    }
+
+    /** Failures elsewhere (search, tags, self-test): logged only, not mixed into the indexing error counter. */
+    fun note(where: String, e: Throwable) {
         Log.w("MemeFinder", where, e)
     }
 }

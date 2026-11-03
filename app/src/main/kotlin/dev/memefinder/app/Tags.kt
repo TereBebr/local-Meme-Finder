@@ -70,7 +70,7 @@ object Tags {
                 null
             } catch (e: Throwable) {
                 state.value = ""
-                IndexState.report("теги", e)
+                IndexState.note("теги", e)
                 "${e.javaClass.simpleName}: ${e.message}"
         }
     }
@@ -95,7 +95,7 @@ object Diagnostics {
             r
         } catch (e: Throwable) {
             say("✗ $title: ${e.javaClass.simpleName}: ${e.message}".take(500))
-            IndexState.report("диагностика: $title", e)
+            IndexState.note("диагностика: $title", e)
             null
         }
     }

@@ -153,3 +153,15 @@ class ZeroShotTest {
         assertEquals(1.0, res.sumOf { it.second }, 0.5)
     }
 }
+
+class TokenizerWhitespaceTest {
+    @Test
+    fun oddWhitespaceAndEmptyInput() {
+        val tok = UnigramTokenizer(File("../app/src/main/assets/vocab.tsv").readLines(Charsets.UTF_8))
+        val plain = tok.encode("кот на диване").ids.toList()
+        assertEquals(plain, tok.encode("  кот на\t\tдиване \n").ids.toList(), "NBSP, tabs and newlines act as single spaces")
+        val empty = tok.encode("   ")
+        assertEquals(listOf(0, 2), empty.ids.take(2))
+        assertEquals(2, empty.mask.sum())
+    }
+}

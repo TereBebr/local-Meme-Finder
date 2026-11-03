@@ -306,7 +306,7 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
                         embCache[q] = e
                         emb = e
                     } catch (t: Throwable) {
-                        IndexState.report("поиск по смыслу", t)
+                        IndexState.note("поиск по смыслу", t)
                         err = "${t.javaClass.simpleName}: ${t.message}"
                     }
                 }

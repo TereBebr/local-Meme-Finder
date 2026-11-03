@@ -1,7 +1,6 @@
 package dev.memefinder.core
 
 import java.text.Normalizer
-import java.util.regex.Pattern
 
 /**
  * SentencePiece-style Unigram tokenizer over the trimmed XLM-R vocabulary (Cyrillic + common Latin).
@@ -36,7 +35,7 @@ class UnigramTokenizer(vocabLines: List<String>) {
     class Encoded(val ids: IntArray, val mask: IntArray)
 
     fun encode(text: String): Encoded {
-        val normalized = WHITESPACE.matcher(Normalizer.normalize(text, Normalizer.Form.NFKC)).replaceAll(" ").trim()
+        val normalized = collapseWhitespace(Normalizer.normalize(text, Normalizer.Form.NFKC))
         val ids = ArrayList<Int>()
         ids.add(BOS)
         if (normalized.isNotEmpty()) {
@@ -53,6 +52,25 @@ class UnigramTokenizer(vocabLines: List<String>) {
             outMask[i] = 1
         }
         return Encoded(outIds, outMask)
+    }
+
+    /** Runs of whitespace become one space, ends trimmed. (No regex flags: Android's regex engine rejects some of them.) */
+    private fun collapseWhitespace(s: String): String {
+        val sb = StringBuilder(s.length)
+        var prevSpace = true
+        for (ch in s) {
+            if (Character.isWhitespace(ch) || Character.isSpaceChar(ch)) {
+                if (!prevSpace) {
+                    sb.append(' ')
+                    prevSpace = true
+                }
+            } else {
+                sb.append(ch)
+                prevSpace = false
+            }
+        }
+        if (sb.isNotEmpty() && sb[sb.length - 1] == ' ') sb.setLength(sb.length - 1)
+        return sb.toString()
     }
 
     private fun viterbi(s: String): List<Int> {
@@ -100,6 +118,5 @@ class UnigramTokenizer(vocabLines: List<String>) {
         const val PAD = 1
         const val EOS = 2
         const val UNK = 3
-        private val WHITESPACE: Pattern = Pattern.compile("\\s+", Pattern.UNICODE_CHARACTER_CLASS)
     }
 }
