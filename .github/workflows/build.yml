@@ -1,0 +1,72 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
+      # The OCR models are public; they are only used here to test the Kotlin OCR pipeline on a generated picture.
+      - name: Cache OCR test models
+        id: models-cache
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: ocr-models-ppocrv5-v1
+
+      - name: Download OCR test models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p models
+          base=https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5
+          curl -fL --retry 3 --retry-delay 5 -o models/ch_PP-OCRv5_det_mobile.onnx "$base/det/ch_PP-OCRv5_det_mobile.onnx"
+          curl -fL --retry 3 --retry-delay 5 -o models/eslav_PP-OCRv5_rec_mobile.onnx "$base/rec/eslav_PP-OCRv5_rec_mobile.onnx"
+          ls -la models
+
+      - name: Core tests
+        id: tests
+        continue-on-error: true
+        env:
+          MODELS_DIR: ${{ github.workspace }}/models
+        run: gradle :core:test --stacktrace
+
+      - name: Build debug APK
+        if: always()
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Upload APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meme-finder-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-reports
+          path: core/build/reports/tests/test
+          if-no-files-found: ignore
+
+      - name: Fail if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
