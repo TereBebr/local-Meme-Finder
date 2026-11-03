@@ -97,6 +97,7 @@ object Library {
     private val lock = Any()
     private val index = SearchIndex()
     private val ocrById = HashMap<Long, String>()
+    private val hiddenSet = HashSet<Long>()
 
     /** Bumped whenever the index changes so the UI can re-run the current search. */
     val version = MutableStateFlow(0)
@@ -113,12 +114,44 @@ object Library {
         synchronized(lock) {
             index.clear()
             ocrById.clear()
+            hiddenSet.clear()
+            hiddenSet.addAll(db.hiddenIds())
+            index.setHidden(hiddenSet)
             db.forEachRow { id, ocr, emb ->
                 index.put(id, ocr, emb)
                 if (!ocr.isNullOrEmpty()) {
                     ocrById[id] = ocr
                 }
             }
+        }
+        version.value++
+    }
+
+    fun hiddenCount(): Int = synchronized(lock) { hiddenSet.size }
+
+    fun hide(db: Db, ids: Collection<Long>) {
+        db.hide(ids)
+        synchronized(lock) {
+            hiddenSet.addAll(ids)
+            index.setHidden(hiddenSet)
+        }
+        version.value++
+    }
+
+    fun unhide(db: Db, ids: Collection<Long>) {
+        db.unhide(ids)
+        synchronized(lock) {
+            hiddenSet.removeAll(ids.toSet())
+            index.setHidden(hiddenSet)
+        }
+        version.value++
+    }
+
+    fun unhideAll(db: Db) {
+        db.unhideAll()
+        synchronized(lock) {
+            hiddenSet.clear()
+            index.setHidden(hiddenSet)
         }
         version.value++
     }

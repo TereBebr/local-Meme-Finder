@@ -165,3 +165,17 @@ class TokenizerWhitespaceTest {
         assertEquals(2, empty.mask.sum())
     }
 }
+
+class HiddenResultsTest {
+    @Test
+    fun hiddenPicturesAreNeverReturned() {
+        val index = SearchIndex()
+        index.put(1, "ХОМЯЧКИ ВОЗЛЕ КОСТЕРКА", null)
+        index.put(2, "хомяк на диване", null)
+        assertEquals(setOf(1L, 2L), index.search("хомяк", null, SearchMode.TEXT).map { it.id }.toSet())
+        index.setHidden(listOf(1L))
+        assertEquals(listOf(2L), index.search("хомяк", null, SearchMode.TEXT).map { it.id })
+        index.setHidden(emptyList())
+        assertEquals(2, index.search("хомяк", null, SearchMode.TEXT).size)
+    }
+}

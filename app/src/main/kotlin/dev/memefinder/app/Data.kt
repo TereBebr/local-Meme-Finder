@@ -98,15 +98,50 @@ object Media {
 }
 
 /** Persistent index: recognized text and CLIP embedding per picture. */
-class Db(ctx: Context) : SQLiteOpenHelper(ctx, "index.db", null, 1) {
+class Db(ctx: Context) : SQLiteOpenHelper(ctx, "index.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE images(id INTEGER PRIMARY KEY, mtime INTEGER NOT NULL, name TEXT, " +
                 "ocr TEXT, has_ocr INTEGER NOT NULL DEFAULT 0, emb BLOB)",
         )
+        db.execSQL("CREATE TABLE IF NOT EXISTS hidden(id INTEGER PRIMARY KEY)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS hidden(id INTEGER PRIMARY KEY)")
+    }
+
+    fun hiddenIds(): Set<Long> {
+        val out = HashSet<Long>()
+        readableDatabase.rawQuery("SELECT id FROM hidden", null).use { c -> while (c.moveToNext()) out.add(c.getLong(0)) }
+        return out
+    }
+
+    fun hide(ids: Collection<Long>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (id in ids) db.execSQL("INSERT OR IGNORE INTO hidden(id) VALUES(?)", arrayOf<Any>(id))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun unhide(ids: Collection<Long>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (id in ids) db.delete("hidden", "id=?", arrayOf(id.toString()))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun unhideAll() {
+        writableDatabase.delete("hidden", null, null)
+    }
 
     fun upsert(id: Long, mtime: Long, name: String, ocr: String?, hasOcr: Boolean, emb: FloatArray?) {
         val st = writableDatabase.compileStatement(

@@ -28,6 +28,12 @@ enum class IndexMode(val title: String, val hint: String) {
     OCR_ONLY("Только текст", "Только надписи на картинках."),
 }
 
+enum class ThemeMode(val title: String) {
+    SYSTEM("Как в системе"),
+    LIGHT("Светлая"),
+    DARK("Тёмная"),
+}
+
 /** User choices that survive restarts: which gallery folders to index and what to extract. */
 object Settings {
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -42,6 +48,13 @@ object Settings {
         val e = prefs(ctx).edit()
         if (value == null) e.remove("buckets_csv") else e.putString("buckets_csv", value.joinToString(","))
         e.commit()
+    }
+
+    fun theme(ctx: Context): ThemeMode =
+        runCatching { ThemeMode.valueOf(prefs(ctx).getString("theme", ThemeMode.SYSTEM.name)!!) }.getOrDefault(ThemeMode.SYSTEM)
+
+    fun setTheme(ctx: Context, t: ThemeMode) {
+        prefs(ctx).edit().putString("theme", t.name).apply()
     }
 
     fun mode(ctx: Context): IndexMode =

@@ -13,8 +13,15 @@ class SearchIndex {
     private val trigrams = ArrayList<LongArray>()
     private val embeddings = ArrayList<FloatArray?>()
     private val positions = HashMap<Long, Int>()
+    private val hidden = HashSet<Long>()
 
     val size: Int get() = ids.size
+
+    /** Pictures the user hid from search results; they stay indexed but are never returned. */
+    fun setHidden(ids: Collection<Long>) {
+        hidden.clear()
+        hidden.addAll(ids)
+    }
 
     fun embeddedCount(): Int = embeddings.count { it != null }
 
@@ -66,6 +73,7 @@ class SearchIndex {
 
         val hits = ArrayList<Hit>()
         for (i in ids.indices) {
+            if (hidden.contains(ids[i])) continue
             val ts = if (terms.isEmpty()) 0.0 else TextMatch.queryScore(terms, texts[i], trigrams[i])
             val z = clipZ?.get(i) ?: Double.NaN
             val cs = if (z.isNaN()) 0.0 else ((z - 1.5) / 3.0).coerceIn(0.0, 1.0)

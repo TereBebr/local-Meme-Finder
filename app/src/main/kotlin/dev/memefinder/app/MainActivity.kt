@@ -1,9 +1,11 @@
 package dev.memefinder.app
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +16,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,8 +53,10 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,12 +70,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import dev.memefinder.core.Hit
 import dev.memefinder.core.SearchMode
 import kotlinx.coroutines.Dispatchers
@@ -84,14 +92,34 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Purple)) {
-                Surface(Modifier.fillMaxSize()) { Root() }
+            var themeMode by remember { mutableStateOf(Settings.theme(this@MainActivity)) }
+            val dark = when (themeMode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            val scheme = if (dark) darkColorScheme(primary = Color(0xFFB7AEFF), onPrimary = Color(0xFF2A1F7A)) else lightColorScheme(primary = Purple)
+            val view = LocalView.current
+            SideEffect {
+                val w = (view.context as Activity).window
+                w.setBackgroundDrawable(ColorDrawable(scheme.background.toArgb()))
+                val controller = WindowCompat.getInsetsController(w, view)
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+            MaterialTheme(colorScheme = scheme) {
+                Surface(Modifier.fillMaxSize()) {
+                    Root(themeMode) {
+                        themeMode = it
+                        Settings.setTheme(this@MainActivity, it)
+                    }
+                }
             }
         }
     }
 }
 
-private enum class Screen { SEARCH, INDEX }
+private enum class Screen { SEARCH, INDEX, SETTINGS }
 
 private fun hasPhotoPermission(ctx: Context): Boolean {
     val p = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -99,14 +127,14 @@ private fun hasPhotoPermission(ctx: Context): Boolean {
 }
 
 @Composable
-private fun Root() {
+private fun Root(themeMode: ThemeMode, onTheme: (ThemeMode) -> Unit) {
     val ctx = LocalContext.current
     var hasPerm by remember { mutableStateOf(hasPhotoPermission(ctx)) }
     var missing by remember { mutableStateOf(ModelFiles.missing(ctx)) }
     var screen by remember { mutableStateOf(Screen.SEARCH) }
 
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { Library.load(MemeApp.instance.db) } }
-    BackHandler(enabled = screen == Screen.INDEX) { screen = Screen.SEARCH }
+    BackHandler(enabled = screen != Screen.SEARCH) { screen = Screen.SEARCH }
 
     if (!hasPerm || missing.isNotEmpty()) {
         SetupScreen(
@@ -117,8 +145,14 @@ private fun Root() {
         )
     } else {
         when (screen) {
-            Screen.SEARCH -> SearchScreen(onOpenIndex = { screen = Screen.INDEX })
-            Screen.INDEX -> IndexScreen(onBack = { screen = Screen.SEARCH }, onModelsChanged = { missing = ModelFiles.missing(ctx) })
+            Screen.SEARCH -> SearchScreen(onOpenIndex = { screen = Screen.INDEX }, onOpenSettings = { screen = Screen.SETTINGS })
+            Screen.INDEX -> IndexScreen(onBack = { screen = Screen.SEARCH })
+            Screen.SETTINGS -> SettingsScreen(
+                onBack = { screen = Screen.SEARCH },
+                themeMode = themeMode,
+                onTheme = onTheme,
+                onModelsChanged = { missing = ModelFiles.missing(ctx) },
+            )
         }
     }
 }
@@ -195,7 +229,7 @@ private fun Cell(id: Long, selected: Boolean, onClick: () -> Unit, onLongClick: 
     val ctx = LocalContext.current
     val bmp by produceState<Bitmap?>(null, id) { value = Thumbs.get(ctx, id) }
     Box(
-        Modifier.aspectRatio(1f).padding(1.dp).background(Color(0xFFEEEEEE))
+        Modifier.aspectRatio(1f).padding(1.dp).background(MaterialTheme.colorScheme.surfaceVariant)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         val b = bmp
@@ -211,7 +245,7 @@ private fun Cell(id: Long, selected: Boolean, onClick: () -> Unit, onLongClick: 
 private class TagsUi(val tags: List<String>, val error: String?)
 
 @Composable
-private fun Viewer(id: Long, onClose: () -> Unit) {
+private fun Viewer(id: Long, onHide: () -> Unit, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val bmp by produceState<Bitmap?>(null, id) { value = withContext(Dispatchers.IO) { Media.loadBitmap(ctx, id, 2048) } }
     val text = remember(id) { Library.ocrText(id) }
@@ -241,7 +275,7 @@ private fun Viewer(id: Long, onClose: () -> Unit) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).heightIn(max = 170.dp).verticalScroll(rememberScrollState())) {
                     val ui = tagsUi
                     val meaning = when {
-                        emb == null -> "не посчитан для этой картинки (индексация «Только текст» или модель картинок не сработала; см. «Индекс» → «Проверить модели»)"
+                        emb == null -> "не посчитан для этой картинки (индексация «Только текст» или модель картинок не сработала; см. «Настройки» → «Проверить модели»)"
                         ui == null -> if (tagsState.isNotEmpty()) tagsState else "считаю…"
                         ui.error != null -> "ошибка: ${ui.error}"
                         else -> ui.tags.joinToString(" · ")
@@ -252,8 +286,12 @@ private fun Viewer(id: Long, onClose: () -> Unit) {
                         Text("Текст: " + text.replace("\n", " / "), color = Color.White, style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { Share.send(ctx, listOf(id)) }) { Text("Поделиться") }
+                    OutlinedButton(onClick = { Gallery.open(ctx, id) }) { Text("В галерее") }
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = onHide) { Text("Скрыть из поиска", color = Color(0xFFFFB4AB)) }
                     TextButton(onClick = onClose) { Text("Закрыть", color = Color.White) }
                 }
             }
@@ -268,8 +306,9 @@ private fun modeLabel(m: SearchMode) = when (m) {
 }
 
 @Composable
-private fun SearchScreen(onOpenIndex: () -> Unit) {
+private fun SearchScreen(onOpenIndex: () -> Unit, onOpenSettings: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf(SearchMode.ALL) }
     var hits by remember { mutableStateOf<List<Hit>>(emptyList()) }
@@ -278,6 +317,7 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
     var viewing by remember { mutableStateOf<Long?>(null) }
     val selected = remember { mutableStateListOf<Long>() }
     val embCache = remember { HashMap<String, FloatArray>() }
+    var lastHidden by remember { mutableStateOf<List<Long>>(emptyList()) }
 
     val version by Library.version.collectAsState()
     val running by IndexState.running.collectAsState()
@@ -285,6 +325,20 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
     val total by IndexState.total.collectAsState()
 
     BackHandler(enabled = selected.isNotEmpty()) { selected.clear() }
+
+    fun hideIds(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        scope.launch(Dispatchers.IO) { Library.hide(MemeApp.instance.db, ids) }
+        lastHidden = ids
+        selected.clear()
+        viewing = null
+    }
+    LaunchedEffect(lastHidden) {
+        if (lastHidden.isNotEmpty()) {
+            delay(8000)
+            lastHidden = emptyList()
+        }
+    }
 
     LaunchedEffect(query, mode, version) {
         val q = query.trim()
@@ -331,22 +385,23 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 placeholder = { Text("котик, хомяк, текст с картинки…") },
+                trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("✕") } },
             )
             Spacer(Modifier.width(4.dp))
             TextButton(onClick = onOpenIndex) { Text("Индекс") }
+            TextButton(onClick = onOpenSettings) { Text("⚙") }
         }
         Row(Modifier.padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             for (m in SearchMode.values()) FilterChip(selected = mode == m, onClick = { mode = m }, label = { Text(modeLabel(m)) })
-            if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("Очистить") }
         }
         if (running) {
             Text("Индексация: $done из $total", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
         }
         if (semanticError.isNotEmpty()) {
             Text(
-                "Поиск по смыслу не работает: $semanticError. Откройте «Индекс» → «Проверить модели».",
+                "Поиск по смыслу не работает: $semanticError. Откройте «⚙» → «Проверить модели».",
                 Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                color = Color(0xFFB3261E),
+                color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -355,8 +410,18 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
                 Text("Выбрано: ${selected.size}")
                 Row {
                     Button(onClick = { Share.send(ctx, selected.toList()) }) { Text("Поделиться") }
+                    TextButton(onClick = { hideIds(selected.toList()) }) { Text("Скрыть") }
                     TextButton(onClick = { selected.clear() }) { Text("Отмена") }
                 }
+            }
+        } else if (lastHidden.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Скрыто из поиска: ${lastHidden.size}", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = {
+                    val back = lastHidden
+                    lastHidden = emptyList()
+                    scope.launch(Dispatchers.IO) { Library.unhide(MemeApp.instance.db, back) }
+                }) { Text("Отменить") }
             }
         } else if (status.isNotEmpty()) {
             Text(status, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
@@ -387,7 +452,7 @@ private fun SearchScreen(onOpenIndex: () -> Unit) {
             }
         }
     }
-    viewing?.let { Viewer(it) { viewing = null } }
+    viewing?.let { id -> Viewer(id, onHide = { hideIds(listOf(id)) }, onClose = { viewing = null }) }
 }
 
 private fun toggle(list: MutableList<Long>, id: Long) {
@@ -397,17 +462,13 @@ private fun toggle(list: MutableList<Long>, id: Long) {
 // ------------------------------------------------------------------------------------------ indexing
 
 @Composable
-private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
+private fun IndexScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var statuses by remember { mutableStateOf<Map<Long, IndexStatus>>(emptyMap()) }
     var stats by remember { mutableStateOf(Triple(0, 0, 0)) }
     var chosen by remember { mutableStateOf(Settings.buckets(ctx)) }
     var mode by remember { mutableStateOf(Settings.mode(ctx)) }
-    var modelStatus by remember { mutableStateOf("") }
-    var diag by remember { mutableStateOf<List<String>>(emptyList()) }
-    var diagRunning by remember { mutableStateOf(false) }
 
     val running by IndexState.running.collectAsState()
     val done by IndexState.done.collectAsState()
@@ -500,7 +561,7 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
                     Text(if (pending > 0) "Начать индексацию (осталось: $pending)" else "Начать индексацию")
                 }
                 val hint = when {
-                    !modelsOk -> "Сначала нужны файлы моделей (раздел «Модели» ниже)."
+                    !modelsOk -> "Сначала нужны файлы моделей: «⚙» → «Модели»."
                     chosenBuckets.isEmpty() -> "Не выбрано ни одной папки: отметьте хотя бы одну."
                     pending == 0 -> "Выбранные папки уже полностью обработаны в этом режиме."
                     else -> ""
@@ -518,30 +579,84 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
             if (errors > 0) {
                 Text(
                     "Ошибок при индексации: $errors. Последняя: $lastError",
-                    color = Color(0xFFB3261E),
+                    color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
             Text(
                 "Индексация идёт в фоне, приложение можно закрыть. Остановить её можно кнопкой здесь или в шторке уведомлений. " +
-                    "Уже обработанные картинки не пересчитываются.",
+                    "Уже обработанные картинки не пересчитываются. Если в фоне работает медленно, см. «⚙» → «Работа в фоне».",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp),
-            )
-            OutlinedButton(
-                onClick = { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
-                modifier = Modifier.padding(top = 8.dp),
-            ) { Text("Не ограничивать в фоне (батарея)") }
-            Text(
-                "На Samsung лучше найти «Мем-Искатель» в списке и выбрать «Не оптимизировать», иначе фоновая работа может сильно тормозить.",
-                style = MaterialTheme.typography.bodySmall,
             )
         }
+    }
+}
+
+// ------------------------------------------------------------------------------------------ settings
+
+@Composable
+private fun SettingsScreen(onBack: () -> Unit, themeMode: ThemeMode, onTheme: (ThemeMode) -> Unit, onModelsChanged: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var modelStatus by remember { mutableStateOf("") }
+    var diag by remember { mutableStateOf<List<String>>(emptyList()) }
+    var diagRunning by remember { mutableStateOf(false) }
+    val version by Library.version.collectAsState()
+    val hiddenCount = remember(version) { Library.hiddenCount() }
+    val modelsMissing = ModelFiles.missing(ctx)
+    val versionName = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
+
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("← Назад") }
+                Text("Настройки", style = MaterialTheme.typography.titleLarge)
+            }
+        }
+        item { Text("Тема", style = MaterialTheme.typography.titleMedium) }
+        items(ThemeMode.values().toList()) { t ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = themeMode == t, onClick = { onTheme(t) })
+                Text(t.title)
+            }
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
+            Text("Скрытые результаты", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (hiddenCount == 0) "Скрытых картинок нет. Скрыть можно в просмотре картинки или при выборе нескольких."
+                else "Скрыто из поиска: $hiddenCount. Сами картинки остаются в галерее и в индексе.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (hiddenCount > 0) {
+                OutlinedButton(onClick = { scope.launch(Dispatchers.IO) { Library.unhideAll(MemeApp.instance.db) } }) { Text("Вернуть все в поиск") }
+            }
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
+            Text("Работа в фоне", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Если индексация в фоне идёт заметно медленнее, чем при открытом приложении, отключите для «Мем-Искатель» экономию батареи: " +
+                    "в списке выберите приложение и «Не оптимизировать» (на Samsung ещё помогает убрать его из «Спящих приложений»).",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(onClick = {
+                ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }) { Text("Открыть настройки батареи") }
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
+            Text("Модели", style = MaterialTheme.typography.titleMedium)
+            Text(if (modelsMissing.isEmpty()) "Все файлы моделей на месте." else "Не хватает: " + modelsMissing.joinToString(", "))
+            ModelPickerButton("Заменить файлы моделей", onModelsChanged) { modelStatus = it }
+            if (modelStatus.isNotEmpty()) Text(modelStatus, style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
             Text("Проверка", style = MaterialTheme.typography.titleMedium)
-            Text("Если поиск «Смысл» ничего не находит, нажмите и покажите результат: здесь видно, на каком шаге ломается.", style = MaterialTheme.typography.bodySmall)
+            Text("Если что-то не находится или не работает, нажмите: здесь видно, на каком шаге ломается.", style = MaterialTheme.typography.bodySmall)
             Button(
                 enabled = !diagRunning,
                 onClick = {
@@ -557,10 +672,8 @@ private fun IndexScreen(onBack: () -> Unit, onModelsChanged: () -> Unit) {
         items(diag) { line -> Text(line, style = MaterialTheme.typography.bodySmall) }
         item {
             Spacer(Modifier.height(16.dp))
-            Text("Модели", style = MaterialTheme.typography.titleMedium)
-            Text(if (modelsOk) "Все файлы моделей на месте." else "Не хватает: " + ModelFiles.missing(ctx).joinToString(", "))
-            ModelPickerButton("Заменить файлы моделей", onModelsChanged) { modelStatus = it }
-            if (modelStatus.isNotEmpty()) Text(modelStatus, style = MaterialTheme.typography.bodySmall)
+            Text("Мем-Искатель $versionName", style = MaterialTheme.typography.bodySmall)
+            Text("Всё считается на телефоне. У приложения нет разрешения на доступ в интернет.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(32.dp))
         }
     }

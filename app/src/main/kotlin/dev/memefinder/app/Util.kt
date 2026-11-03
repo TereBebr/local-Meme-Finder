@@ -23,6 +23,20 @@ object Thumbs {
     }
 }
 
+object Gallery {
+    fun open(ctx: Context, id: Long) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Media.uriOf(id), "image/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            ctx.startActivity(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.widget.Toast.makeText(ctx, "Не нашлось приложения, чтобы открыть картинку", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
 object Share {
     fun send(ctx: Context, ids: List<Long>) {
         if (ids.isEmpty()) return
