@@ -96,3 +96,43 @@ class ResampleTest {
         for (p in r.argb) assertTrue(((p shr 8) and 255) in 100..155, "anti-aliased grey expected, got ${(p shr 8) and 255}")
     }
 }
+
+class ResampleParityTest {
+    private fun load(name: String): RgbImage {
+        val bytes = javaClass.getResourceAsStream("/$name")!!.readBytes()
+        val bb = java.nio.ByteBuffer.wrap(bytes)
+        val w = bb.int
+        val h = bb.int
+        val px = IntArray(w * h)
+        for (i in px.indices) {
+            val r = bb.get().toInt() and 255
+            val g = bb.get().toInt() and 255
+            val b = bb.get().toInt() and 255
+            px[i] = (255 shl 24) or (r shl 16) or (g shl 8) or b
+        }
+        return RgbImage(w, h, px)
+    }
+
+    private fun check(name: String, filter: RgbImage.Filter) {
+        val src = load("resample_input.bin")
+        val expected = load("resample_$name.bin")
+        val actual = src.resize(expected.width, expected.height, filter)
+        var sum = 0L
+        var max = 0
+        for (i in expected.argb.indices) {
+            for (shift in intArrayOf(16, 8, 0)) {
+                val d = Math.abs(((expected.argb[i] shr shift) and 255) - ((actual.argb[i] shr shift) and 255))
+                sum += d
+                if (d > max) max = d
+            }
+        }
+        val mean = sum.toDouble() / (expected.argb.size * 3)
+        println("resample $name: mean abs diff %.3f, max %d".format(mean, max))
+        assertTrue(mean < 1.0 && max <= 6, "resample $name differs from Pillow: mean=$mean max=$max")
+    }
+
+    @Test fun bilinearDownMatchesPillow() = check("bilinear_down", RgbImage.Filter.BILINEAR)
+    @Test fun bilinearUpMatchesPillow() = check("bilinear_up", RgbImage.Filter.BILINEAR)
+    @Test fun bicubicDownMatchesPillow() = check("bicubic_down", RgbImage.Filter.BICUBIC)
+    @Test fun bicubicUpMatchesPillow() = check("bicubic_up", RgbImage.Filter.BICUBIC)
+}

@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -58,6 +61,16 @@ jobs:
           name: meme-finder-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
+
+      - name: Publish APK as a release
+        if: steps.tests.outcome == 'success' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-${{ github.run_number }}"
+          cp app/build/outputs/apk/debug/app-debug.apk "meme-finder-$tag.apk"
+          gh release create "$tag" "meme-finder-$tag.apk" --title "Сборка $tag" \
+            --notes "Debug APK. Commit ${{ github.sha }}." --latest
 
       - name: Upload test reports
         if: always()
