@@ -60,13 +60,13 @@ Good to know
 ## HOW TO USE
 
 ### 1. Install the app
-1. Open the [Releases page](https://github.com/TereBebr/meme-finder/releases/latest) on your phone and download `meme-finder-build-N.apk` (the newest build).
+1. Open the [Releases page](https://github.com/TereBebr/local-Meme-Finder/releases/latest) on your phone and download `meme-finder-build-N.apk` (the newest build).
 2. Open the downloaded file. Android will ask to allow installing apps from this source: allow it for your browser or file manager.
 3. If Play Protect warns about an unknown app, choose **Install anyway** (this is a personal build, it is not distributed through an app store).
 4. New versions install on top of the old one and keep your index.
 
 ### 2. Get the model files (one time, about 470 MB)
-Download all four files from the [`models-v1` release](https://github.com/TereBebr/meme-finder/releases/tag/models-v1) and put them together in one folder on the phone, for example `Download/meme-models`:
+Download all four files from the [`models-v1` release](https://github.com/TereBebr/local-Meme-Finder/releases/tag/models-v1) and put them together in one folder on the phone, for example `Download/meme-models`:
 
 * `ch_PP-OCRv5_det_mobile.onnx`
 * `eslav_PP-OCRv5_rec_mobile.onnx`
@@ -100,13 +100,13 @@ If the files are on a computer, copy the folder to the phone over USB.
 ## КАК ИСПОЛЬЗОВАТЬ
 
 ### 1. Установите приложение
-1. Откройте [страницу релизов](https://github.com/TereBebr/meme-finder/releases/latest) на телефоне и скачайте `meme-finder-build-N.apk` (самая новая сборка).
+1. Откройте [страницу релизов](https://github.com/TereBebr/local-Meme-Finder/releases/latest) на телефоне и скачайте `meme-finder-build-N.apk` (самая новая сборка).
 2. Откройте скачанный файл. Android попросит разрешить установку из этого источника: разрешите для браузера или файлового менеджера.
 3. Если Play Protect предупредит о неизвестном приложении, выберите **Всё равно установить** (это личная сборка, в магазинах приложений её нет).
 4. Новые версии ставятся поверх старой, индекс сохраняется.
 
 ### 2. Скачайте файлы моделей (один раз, около 470 МБ)
-Скачайте все четыре файла из [релиза `models-v1`](https://github.com/TereBebr/meme-finder/releases/tag/models-v1) и сложите вместе в одну папку на телефоне, например `Download/meme-models`:
+Скачайте все четыре файла из [релиза `models-v1`](https://github.com/TereBebr/local-Meme-Finder/releases/tag/models-v1) и сложите вместе в одну папку на телефоне, например `Download/meme-models`:
 
 * `ch_PP-OCRv5_det_mobile.onnx`
 * `eslav_PP-OCRv5_rec_mobile.onnx`
